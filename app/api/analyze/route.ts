@@ -1,4 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+
+// Simple in-memory rate limiter: 5 requests per IP per minute
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+function isRateLimited(ip: string): boolean {
+  const now = Date.now()
+  const entry = rateLimitMap.get(ip)
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 })
+    return false
+  }
+  if (entry.count >= 5) return true
+  entry.count++
+  return false
+}
 import { analyzeSEO } from '@/lib/analyzers/seo'
 import { analyzeGEO } from '@/lib/analyzers/geo'
 import { analyzeContent } from '@/lib/analyzers/content'
@@ -91,6 +105,14 @@ async function runAudit(url: string, depth: 'basic' | 'deep'): Promise<AuditResu
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+    if (isRateLimited(ip)) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please wait a minute before trying again.' },
+        { status: 429 }
+      )
+    }
+
     const body: AnalyzeRequest = await req.json()
     const { url, competitorUrl, urls, mode, depth } = body
 
